@@ -1,7 +1,6 @@
+use inkwell::context::Context;
 use std::env;
-
 use syntax::functions::CheckedProgram;
-
 enum CompilerError {
     CouldNotReadFile(String),
 }
@@ -23,6 +22,11 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    let context = Context::create();
+    let module = context.create_module("oxide");
+
+    println!("{}", module.print_to_string().to_string());
 }
 
 fn get_program_from_file(file_path: &str) -> Result<CheckedProgram, CompilerError> {
