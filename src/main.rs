@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::env;
 use syntax::{
     ast::{Expression, Statement},
-    functions::CheckedProgram,
+    functions::{CheckedProgram, Function, FunctionId},
     types::{Type, Value},
 };
 
@@ -19,7 +19,7 @@ struct CodeGenerator<'ctx> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
 
-    functions: HashMap<String, FunctionValue<'ctx>>,
+    functions: HashMap<FunctionId, FunctionValue<'ctx>>,
     variables: HashMap<String, PointerValue<'ctx>>,
 
     string_type: StructType<'ctx>,
@@ -113,7 +113,26 @@ impl<'ctx> CodeGenerator<'ctx> {
             _ => panic!("Global variables can only be initialized with constant expressions."),
         }
     }
+
+    fn compile_function(&self, function: &Function) -> Result<(), CompilerError> {
+        let llvm_function = self
+            .functions
+            .get(&function.id)
+            .expect(format!("function {} was not declared", function.signature.name).as_str());
+
+        let entry = self.context.append_basic_block(*llvm_function, "entry");
+
+        self.builder.position_at_end(entry);
+
+        self.builder
+            .build_return(None)
+            .expect("failed to build return");
+
+        Ok(())
+    }
 }
+
+#[derive(Debug)]
 enum CompilerError {
     CouldNotReadFile(String),
 }
@@ -143,11 +162,13 @@ fn main() {
             .expect("error finding program name"),
     );
     let context = Context::create();
-    let code_gen = CodeGenerator::new(&context, &program_name);
+    let mut code_gen = CodeGenerator::new(&context, &program_name);
 
-    declare_all_functions(&code_gen, &program);
+    declare_all_functions(&mut code_gen, &program);
 
     declare_global_variables(&code_gen, &program);
+
+    compile_all_functions(&code_gen, &program);
 
     println!("{}", code_gen.module.print_to_string().to_string());
 }
@@ -178,13 +199,13 @@ fn declare_global_variables(code_gen: &CodeGenerator, program: &CheckedProgram) 
                 global_variable.set_initializer(&initialiser);
             }
             _ => {
-                panic!("Global variable is not a let statement");
+                unreachable!("Global variable is not a let statement");
             }
         }
     }
 }
 
-fn declare_all_functions(code_gen: &CodeGenerator, program: &CheckedProgram) {
+fn declare_all_functions(code_gen: &mut CodeGenerator, program: &CheckedProgram) {
     for function in &program.function_table.functions {
         let param_types: &Vec<BasicMetadataTypeEnum> = &function
             .signature
@@ -201,8 +222,19 @@ fn declare_all_functions(code_gen: &CodeGenerator, program: &CheckedProgram) {
         // Create a unique function name by appending the function ID to the original name
         // eg print_1()
         let function_name = format!("{}_{}", function.signature.name, function.id.0);
-        code_gen
+        let function_value = code_gen
             .module
             .add_function(&function_name, function_type, None);
+        code_gen
+            .functions
+            .insert(function.id.clone(), function_value);
+    }
+}
+
+fn compile_all_functions(code_gen: &CodeGenerator, program: &CheckedProgram) {
+    for function in &program.function_table.functions {
+        code_gen
+            .compile_function(function)
+            .expect("failed to compile function");
     }
 }
