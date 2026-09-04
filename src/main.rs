@@ -39,15 +39,15 @@ impl<'ctx> CodeGenerator<'ctx> {
             ),
         }
     }
-    fn llvm_type(&self, context: &'ctx Context, ty: &Type) -> BasicTypeEnum<'ctx> {
+    fn llvm_type(&self, ty: &Type) -> BasicTypeEnum<'ctx> {
         match ty {
-            Type::I8 | Type::U8 => context.i8_type().into(),
-            Type::I16 | Type::U16 => context.i16_type().into(),
-            Type::I32 | Type::U32 => context.i32_type().into(),
-            Type::I64 | Type::U64 => context.i64_type().into(),
-            Type::F32 => context.f32_type().into(),
-            Type::F64 => context.f64_type().into(),
-            Type::Bool => context.bool_type().into(),
+            Type::I8 | Type::U8 => self.context.i8_type().into(),
+            Type::I16 | Type::U16 => self.context.i16_type().into(),
+            Type::I32 | Type::U32 => self.context.i32_type().into(),
+            Type::I64 | Type::U64 => self.context.i64_type().into(),
+            Type::F32 => self.context.f32_type().into(),
+            Type::F64 => self.context.f64_type().into(),
+            Type::Bool => self.context.bool_type().into(),
             Type::String => self.string_type.into(),
             Type::Unit => panic!("Unit type should only be used as a return type"),
         }
@@ -75,8 +75,6 @@ fn main() {
         }
     };
 
-    // let context = Context::create();
-    // let module = context.create_module("oxide");
     let program_name = String::from(
         args[1]
             .split('.')
@@ -105,12 +103,12 @@ fn declare_all_functions(code_gen: &CodeGenerator, program: &CheckedProgram) {
             .signature
             .parameters
             .iter()
-            .map(|param_type| code_gen.llvm_type(code_gen.context, param_type).into())
+            .map(|param_type| code_gen.llvm_type(param_type).into())
             .collect::<Vec<BasicMetadataTypeEnum>>();
         let function_type = match &function.signature.return_type {
             Type::Unit => code_gen.context.void_type().fn_type(param_types, false),
             _ => code_gen
-                .llvm_type(code_gen.context, &function.signature.return_type)
+                .llvm_type(&function.signature.return_type)
                 .fn_type(&param_types, false),
         };
         code_gen
