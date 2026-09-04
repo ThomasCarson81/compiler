@@ -8,7 +8,7 @@ use inkwell::{
 };
 use std::collections::HashMap;
 use std::env;
-use syntax::{functions::CheckedProgram, types::Type};
+use syntax::{ast::Statement, functions::CheckedProgram, types::Type};
 
 struct CodeGenerator<'ctx> {
     context: &'ctx Context,
@@ -86,6 +86,8 @@ fn main() {
 
     declare_all_functions(&code_gen, &program);
 
+    declare_global_variables(&code_gen, &program);
+
     println!("{}", code_gen.module.print_to_string().to_string());
 }
 
@@ -95,6 +97,29 @@ fn get_program_from_file(file_path: &str) -> Result<CheckedProgram, CompilerErro
     let program: CheckedProgram =
         serde_json::from_str(&ast).map_err(|e| CompilerError::CouldNotReadFile(e.to_string()))?;
     Ok(program)
+}
+
+fn declare_global_variables(code_gen: &CodeGenerator, program: &CheckedProgram) {
+    for variable in &program.globals {
+        match variable {
+            Statement::Let {
+                identifier,
+                expression: _,
+                mutable: _,
+                var_type,
+            } => {
+                let llvm_type = code_gen
+                    .llvm_type(&var_type.expect(
+                        format!("unknown type of global variable {}", identifier).as_str(),
+                    ));
+                let global_variable = code_gen.module.add_global(llvm_type, None, &identifier);
+                global_variable.set_initializer(&llvm_type.const_zero());
+            }
+            _ => {
+                panic!("Global variable is not a let statement");
+            }
+        }
+    }
 }
 
 fn declare_all_functions(code_gen: &CodeGenerator, program: &CheckedProgram) {
