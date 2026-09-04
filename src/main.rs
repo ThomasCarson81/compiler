@@ -4,11 +4,15 @@ use inkwell::{
     context::Context,
     module::Module,
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType},
-    values::{FunctionValue, PointerValue},
+    values::{BasicValueEnum, FunctionValue, PointerValue},
 };
 use std::collections::HashMap;
 use std::env;
-use syntax::{ast::Statement, functions::CheckedProgram, types::Type};
+use syntax::{
+    ast::{Expression, Statement},
+    functions::CheckedProgram,
+    types::{Type, Value},
+};
 
 struct CodeGenerator<'ctx> {
     context: &'ctx Context,
@@ -39,6 +43,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             ),
         }
     }
+
     fn llvm_type(&self, ty: &Type) -> BasicTypeEnum<'ctx> {
         match ty {
             Type::I8 | Type::U8 => self.context.i8_type().into(),
@@ -50,6 +55,62 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Bool => self.context.bool_type().into(),
             Type::String => self.string_type.into(),
             Type::Unit => panic!("Unit type should only be used as a return type"),
+        }
+    }
+
+    fn const_expression(&self, expr: &Expression) -> BasicValueEnum<'ctx> {
+        match expr {
+            Expression::Literal(literal) => match literal {
+                Value::Number(number) => match number {
+                    syntax::types::Number::I8(n) => {
+                        self.context.i8_type().const_int(*n as u64, false).into()
+                    }
+                    syntax::types::Number::I16(n) => {
+                        self.context.i16_type().const_int(*n as u64, false).into()
+                    }
+                    syntax::types::Number::I32(n) => {
+                        self.context.i32_type().const_int(*n as u64, false).into()
+                    }
+                    syntax::types::Number::I64(n) => {
+                        self.context.i64_type().const_int(*n as u64, false).into()
+                    }
+                    syntax::types::Number::U8(n) => {
+                        self.context.i8_type().const_int(*n as u64, false).into()
+                    }
+                    syntax::types::Number::U16(n) => {
+                        self.context.i16_type().const_int(*n as u64, false).into()
+                    }
+                    syntax::types::Number::U32(n) => {
+                        self.context.i32_type().const_int(*n as u64, false).into()
+                    }
+                    syntax::types::Number::U64(n) => {
+                        self.context.i64_type().const_int(*n as u64, false).into()
+                    }
+                    syntax::types::Number::F32(n) => {
+                        self.context.f32_type().const_float(*n as f64).into()
+                    }
+                    syntax::types::Number::F64(n) => self.context.f64_type().const_float(*n).into(),
+                    syntax::types::Number::IntegerLiteral(_)
+                    | syntax::types::Number::FloatLiteral(_) => unreachable!(
+                        "number literals should be converted to specific types during type checking"
+                    ),
+                },
+                Value::String(value) => {
+                    let string_ptr = self
+                        .builder
+                        .build_global_string_ptr(value, "string")
+                        .expect("builder error");
+                    let string_len = self.context.i64_type().const_int(value.len() as u64, false);
+                    let string_struct = self.string_type.const_named_struct(&[
+                        string_ptr.as_pointer_value().into(),
+                        string_len.into(),
+                    ]);
+                    string_struct.into()
+                }
+                Value::Bool(b) => self.context.bool_type().const_int(*b as u64, false).into(),
+                Value::Unit => panic!("Unit type should only be used as a return type"),
+            },
+            _ => panic!("Global variables can only be initialized with constant expressions."),
         }
     }
 }
@@ -104,7 +165,7 @@ fn declare_global_variables(code_gen: &CodeGenerator, program: &CheckedProgram) 
         match variable {
             Statement::Let {
                 identifier,
-                expression: _,
+                expression,
                 mutable: _,
                 var_type,
             } => {
@@ -112,8 +173,9 @@ fn declare_global_variables(code_gen: &CodeGenerator, program: &CheckedProgram) 
                     .llvm_type(&var_type.expect(
                         format!("unknown type of global variable {}", identifier).as_str(),
                     ));
+                let initialiser = code_gen.const_expression(expression);
                 let global_variable = code_gen.module.add_global(llvm_type, None, &identifier);
-                global_variable.set_initializer(&llvm_type.const_zero());
+                global_variable.set_initializer(&initialiser);
             }
             _ => {
                 panic!("Global variable is not a let statement");
@@ -136,8 +198,11 @@ fn declare_all_functions(code_gen: &CodeGenerator, program: &CheckedProgram) {
                 .llvm_type(&function.signature.return_type)
                 .fn_type(&param_types, false),
         };
+        // Create a unique function name by appending the function ID to the original name
+        // eg print_1()
+        let function_name = format!("{}_{}", function.signature.name, function.id.0);
         code_gen
             .module
-            .add_function(&function.signature.name, function_type, None);
+            .add_function(&function_name, function_type, None);
     }
 }
