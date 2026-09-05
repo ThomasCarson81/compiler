@@ -4,13 +4,13 @@ use inkwell::{
     context::Context,
     module::Module,
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType},
-    values::{BasicValueEnum, FunctionValue, PointerValue},
+    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
 };
 use std::collections::HashMap;
 use std::env;
 use syntax::{
     ast::{Expression, Statement},
-    functions::{CheckedProgram, Function, FunctionId},
+    functions::{CheckedProgram, Function, FunctionId, FunctionImplementation},
     types::{Type, Value},
 };
 
@@ -20,7 +20,7 @@ struct CodeGenerator<'ctx> {
     builder: Builder<'ctx>,
 
     functions: HashMap<FunctionId, FunctionValue<'ctx>>,
-    variables: HashMap<String, PointerValue<'ctx>>,
+    variables: Vec<HashMap<String, PointerValue<'ctx>>>,
 
     string_type: StructType<'ctx>,
 }
@@ -33,7 +33,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             module,
             builder,
             functions: HashMap::new(),
-            variables: HashMap::new(),
+            variables: vec![HashMap::new()],
             string_type: context.struct_type(
                 &[
                     context.ptr_type(AddressSpace::default()).into(),
@@ -42,6 +42,37 @@ impl<'ctx> CodeGenerator<'ctx> {
                 false,
             ),
         }
+    }
+
+    fn push_scope(&mut self) {
+        self.variables.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.variables.pop();
+    }
+
+    fn add_variable(&mut self, name: String, val: PointerValue<'ctx>) {
+        self.variables
+            .last_mut()
+            .expect("ran out of scopes")
+            .insert(name, val);
+    }
+
+    fn get_variable(&self, name: &String) -> &PointerValue<'ctx> {
+        self.variables
+            .iter()
+            .rev()
+            .find_map(|v| v.get(name))
+            .expect("failed to get variable")
+    }
+
+    fn current_block_has_terminator(&self) -> bool {
+        self.builder
+            .get_insert_block()
+            .expect("failed to get insert block")
+            .get_terminator()
+            .is_some()
     }
 
     fn llvm_type(&self, ty: &Type) -> BasicTypeEnum<'ctx> {
@@ -114,7 +145,15 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
     }
 
-    fn compile_function(&self, function: &Function) -> Result<(), CompilerError> {
+    fn compile_function(&mut self, function: &Function) -> Result<(), CompilerError> {
+        let FunctionImplementation::Oxide(body) = &function.implementation else {
+            println!(
+                "cannot compile function {}: only Oxide functions can be compiled",
+                function.signature.name
+            );
+            return Ok(());
+        };
+
         let llvm_function = self
             .functions
             .get(&function.id)
@@ -124,16 +163,319 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         self.builder.position_at_end(entry);
 
-        self.builder
-            .build_return(None)
-            .expect("failed to build return");
+        for statement in &body.statements {
+            self.compile_statement(statement)?;
+        }
+
+        if !self.current_block_has_terminator() {
+            if function.signature.return_type == Type::Unit {
+                self.builder
+                    .build_return(None)
+                    .expect("failed to built void return");
+            } else {
+                panic!("Missing return statement in non unit type function");
+            }
+        }
 
         Ok(())
+    }
+
+    fn compile_statement(&mut self, statement: &Statement) -> Result<(), CompilerError> {
+        let function = self
+            .builder
+            .get_insert_block()
+            .expect("failed to get insert block")
+            .get_parent()
+            .expect("failed to get parent block");
+
+        match statement {
+            Statement::Let { .. } => self.compile_let(statement)?,
+            Statement::Assignment { .. } => self.compile_assignment(statement)?,
+            Statement::If { .. } => self.compile_if(statement, &function)?,
+            Statement::While { .. } => self.compile_while(statement, &function)?,
+            Statement::For { .. } => self.compile_for(statement, &function)?,
+            Statement::Scope { .. } => self.compile_scope(statement)?,
+            Statement::ExpressionStatement { expression } => {
+                self.compile_expression(expression)?;
+            }
+            Statement::Return { .. } => self.compile_return(statement)?,
+            Statement::Break => todo!(),    // uhh
+            Statement::Continue => todo!(), // uhh
+            Statement::FunctionDefinition { .. } => {
+                unreachable!("Function definitions should be declared before compilation")
+            }
+            Statement::Pass => {
+                unreachable!("Pass statements should be not be present in the checked program")
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_let(&mut self, statement: &Statement) -> Result<(), CompilerError> {
+        let Statement::Let {
+            identifier,
+            expression,
+            mutable: _,
+            var_type,
+        } = statement
+        else {
+            return Err(CompilerError::WrongStatementType(
+                "Let".into(),
+                format!("{:?}", statement),
+            ));
+        };
+
+        let llvm_type = self.llvm_type(
+            &var_type.expect(format!("unknown type of variable {}", identifier).as_str()),
+        );
+        let initialiser = self.const_expression(expression);
+        let alloca = self
+            .builder
+            .build_alloca(llvm_type, identifier)
+            .expect("failed to build alloca");
+        self.builder
+            .build_store(alloca, initialiser)
+            .expect("failed to build store");
+        self.add_variable(identifier.clone(), alloca);
+
+        Ok(())
+    }
+
+    fn compile_assignment(&mut self, statement: &Statement) -> Result<(), CompilerError> {
+        let Statement::Assignment {
+            identifier,
+            expression,
+        } = statement
+        else {
+            return Err(CompilerError::WrongStatementType(
+                "Assignment".into(),
+                format!("{:?}", statement),
+            ));
+        };
+
+        let alloca = self.get_variable(identifier);
+        let value = self.const_expression(expression);
+        self.builder
+            .build_store(*alloca, value)
+            .expect("failed to build store");
+
+        Ok(())
+    }
+
+    fn compile_if(
+        &mut self,
+        statement: &Statement,
+        function: &FunctionValue,
+    ) -> Result<(), CompilerError> {
+        let Statement::If {
+            condition,
+            body,
+            else_block,
+        } = statement
+        else {
+            return Err(CompilerError::WrongStatementType(
+                "If".into(),
+                format!("{:?}", statement),
+            ));
+        };
+
+        let condition_value = self.const_expression(condition);
+
+        let then_block = self.context.append_basic_block(*function, "then");
+        let else_llvm_block = self.context.append_basic_block(*function, "else");
+        let merge_block = self.context.append_basic_block(*function, "merge");
+
+        self.builder
+            .build_conditional_branch(
+                condition_value.into_int_value(),
+                then_block,
+                else_llvm_block,
+            )
+            .expect("failed to build conditional branch");
+
+        self.builder.position_at_end(then_block);
+        for statement in body {
+            self.compile_statement(statement)?;
+        }
+        if !self.current_block_has_terminator() {
+            self.builder
+                .build_unconditional_branch(merge_block)
+                .expect("failed to build unconditional branch");
+        }
+
+        self.builder.position_at_end(else_llvm_block);
+        if let Some(else_statements) = else_block {
+            for statement in else_statements {
+                self.compile_statement(statement)?;
+            }
+        }
+        if !self.current_block_has_terminator() {
+            self.builder
+                .build_unconditional_branch(merge_block)
+                .expect("failed to build unconditional branch");
+        }
+
+        self.builder.position_at_end(merge_block);
+
+        Ok(())
+    }
+
+    fn compile_while(
+        &mut self,
+        statement: &Statement,
+        function: &FunctionValue,
+    ) -> Result<(), CompilerError> {
+        let Statement::While { condition, body } = statement else {
+            return Err(CompilerError::WrongStatementType(
+                "While".into(),
+                format!("{:?}", statement),
+            ));
+        };
+        let condition_value = self.const_expression(condition);
+
+        let check_block = self.context.append_basic_block(*function, "check");
+        let then_block = self.context.append_basic_block(*function, "then");
+        let merge_block = self.context.append_basic_block(*function, "merge");
+
+        self.builder.position_at_end(check_block);
+
+        self.builder
+            .build_conditional_branch(condition_value.into_int_value(), then_block, merge_block)
+            .expect("failed to build conditional branch");
+        self.builder.position_at_end(then_block);
+        for statement in body {
+            self.compile_statement(statement)?;
+        }
+        if !self.current_block_has_terminator() {
+            self.builder
+                .build_unconditional_branch(check_block)
+                .expect("failed to build unconditional branch to while check");
+        }
+        self.builder.position_at_end(merge_block);
+        Ok(())
+    }
+
+    fn compile_for(
+        &mut self,
+        statement: &Statement,
+        function: &FunctionValue,
+    ) -> Result<(), CompilerError> {
+        let Statement::For {
+            initialiser,
+            condition,
+            increment,
+            body,
+        } = statement
+        else {
+            return Err(CompilerError::WrongStatementType(
+                "For".into(),
+                format!("{:?}", statement),
+            ));
+        };
+
+        if let Some(init) = initialiser {
+            self.compile_statement(init)?;
+        }
+
+        let check_block = self.context.append_basic_block(*function, "check");
+        let then_block = self.context.append_basic_block(*function, "then");
+        let merge_block = self.context.append_basic_block(*function, "merge");
+        self.builder.position_at_end(check_block);
+        if let Some(cond) = condition {
+            self.builder
+                .build_conditional_branch(
+                    self.const_expression(cond).into_int_value(),
+                    then_block,
+                    merge_block,
+                )
+                .expect("failed to build conditional branch in for");
+        } else {
+            self.builder
+                .build_unconditional_branch(then_block)
+                .expect("failed to build unconditional branch in for");
+        }
+        self.builder.position_at_end(then_block);
+        for statement in body {
+            self.compile_statement(statement)?;
+        }
+        if let Some(inc) = increment {
+            self.compile_statement(inc)?;
+        }
+        if !self.current_block_has_terminator() {
+            self.builder
+                .build_unconditional_branch(check_block)
+                .expect("failed to build unconditional branch to check block in for");
+        }
+        self.builder.position_at_end(merge_block);
+        Ok(())
+    }
+
+    fn compile_scope(&mut self, statement: &Statement) -> Result<(), CompilerError> {
+        let Statement::Scope { body } = statement else {
+            return Err(CompilerError::WrongStatementType(
+                "Scope".into(),
+                format!("{:?}", statement),
+            ));
+        };
+        self.push_scope();
+        for statement in body {
+            self.compile_statement(statement)?;
+        }
+        self.pop_scope();
+        Ok(())
+    }
+
+    fn compile_return(&mut self, statement: &Statement) -> Result<(), CompilerError> {
+        let Statement::Return { value } = statement else {
+            return Err(CompilerError::WrongStatementType(
+                "Return".into(),
+                format!("{:?}", statement),
+            ));
+        };
+
+        let ret_val = if let Some(val) = value {
+            Some(self.const_expression(val))
+        } else {
+            None
+        };
+        match ret_val {
+            Some(val) => {
+                self.builder.build_return(Some(&val)).expect("grr");
+            }
+            None => {
+                self.builder.build_return(None).expect("grr but none");
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_expression(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        match expression {
+            Expression::Literal(_) => Ok(self.const_expression(expression)),
+            Expression::Identifier(name) => Ok(self.get_variable(name).as_basic_value_enum()),
+            Expression::BinaryOp {
+                left,
+                operator,
+                right,
+            } => todo!(),
+            Expression::UnaryOp { operator, operand } => todo!(),
+            Expression::ResolvedFunctionCall {
+                function_id,
+                arguments,
+            } => todo!(),
+            Expression::UnresolvedFunctionCall { .. } => {
+                unreachable!("unresolve function call reached compiler")
+            }
+        }
     }
 }
 
 #[derive(Debug)]
 enum CompilerError {
+    WrongStatementType(String, String),
     CouldNotReadFile(String),
 }
 
@@ -150,6 +492,7 @@ fn main() {
                 CompilerError::CouldNotReadFile(s) => {
                     println!("Error reading file: {}", s);
                 }
+                _ => unreachable!("unexpected error when reading from file."),
             }
             std::process::exit(1);
         }
@@ -168,7 +511,7 @@ fn main() {
 
     declare_global_variables(&code_gen, &program);
 
-    compile_all_functions(&code_gen, &program);
+    compile_all_functions(&mut code_gen, &program);
 
     println!("{}", code_gen.module.print_to_string().to_string());
 }
@@ -231,10 +574,13 @@ fn declare_all_functions(code_gen: &mut CodeGenerator, program: &CheckedProgram)
     }
 }
 
-fn compile_all_functions(code_gen: &CodeGenerator, program: &CheckedProgram) {
+fn compile_all_functions(code_gen: &mut CodeGenerator, program: &CheckedProgram) {
     for function in &program.function_table.functions {
-        code_gen
-            .compile_function(function)
-            .expect("failed to compile function");
+        // only compile user defined functions, builtins will be linked later
+        if matches!(function.implementation, FunctionImplementation::Oxide(_)) {
+            code_gen
+                .compile_function(function)
+                .expect("failed to compile function");
+        }
     }
 }
