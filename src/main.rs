@@ -176,7 +176,13 @@ impl<'ctx> CodeGenerator<'ctx> {
                 panic!("Missing return statement in non unit type function");
             }
         }
-
+        let compiled_function = self
+            .functions
+            .get(&function.id)
+            .expect(format!("function {} was not declared", function.signature.name).as_str());
+        if !compiled_function.verify(true) {
+            return Err(CompilerError::InvalidFunction);
+        }
         Ok(())
     }
 
@@ -476,6 +482,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 #[derive(Debug)]
 enum CompilerError {
     WrongStatementType(String, String),
+    InvalidFunction,
     CouldNotReadFile(String),
 }
 
@@ -511,7 +518,21 @@ fn main() {
 
     declare_global_variables(&code_gen, &program);
 
-    compile_all_functions(&mut code_gen, &program);
+    match compile_all_functions(&mut code_gen, &program) {
+        Ok(_) => {}
+        Err(err) => {
+            match err {
+                CompilerError::WrongStatementType(expected, got) => {
+                    println!("Incorrect statement. Expected {expected}, got {got}");
+                }
+                CompilerError::InvalidFunction => println!("Function invalid."),
+                CompilerError::CouldNotReadFile(_) => {
+                    unreachable!("unexpected error when compiling all functions");
+                }
+            }
+            std::process::exit(1);
+        }
+    }
 
     println!("{}", code_gen.module.print_to_string().to_string());
 }
@@ -574,13 +595,15 @@ fn declare_all_functions(code_gen: &mut CodeGenerator, program: &CheckedProgram)
     }
 }
 
-fn compile_all_functions(code_gen: &mut CodeGenerator, program: &CheckedProgram) {
+fn compile_all_functions(
+    code_gen: &mut CodeGenerator,
+    program: &CheckedProgram,
+) -> Result<(), CompilerError> {
     for function in &program.function_table.functions {
         // only compile user defined functions, builtins will be linked later
         if matches!(function.implementation, FunctionImplementation::Oxide(_)) {
-            code_gen
-                .compile_function(function)
-                .expect("failed to compile function");
+            code_gen.compile_function(function)?;
         }
     }
+    Ok(())
 }
