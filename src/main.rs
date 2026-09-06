@@ -4,15 +4,20 @@ use inkwell::{
     context::Context,
     module::Module,
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType},
-    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
+    values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue},
 };
 use std::collections::HashMap;
 use std::env;
 use syntax::{
-    ast::{Expression, Statement},
+    ast::{Expression, Statement, TokenType},
     functions::{CheckedProgram, Function, FunctionId, FunctionImplementation},
     types::{Type, Value},
 };
+
+struct Variable<'ctx> {
+    ptr: PointerValue<'ctx>,
+    ty: BasicTypeEnum<'ctx>,
+}
 
 struct CodeGenerator<'ctx> {
     context: &'ctx Context,
@@ -20,7 +25,7 @@ struct CodeGenerator<'ctx> {
     builder: Builder<'ctx>,
 
     functions: HashMap<FunctionId, FunctionValue<'ctx>>,
-    variables: Vec<HashMap<String, PointerValue<'ctx>>>,
+    variables: Vec<HashMap<String, Variable<'ctx>>>,
 
     string_type: StructType<'ctx>,
 }
@@ -52,14 +57,14 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.variables.pop();
     }
 
-    fn add_variable(&mut self, name: String, val: PointerValue<'ctx>) {
+    fn add_variable(&mut self, name: String, val: Variable<'ctx>) {
         self.variables
             .last_mut()
             .expect("ran out of scopes")
             .insert(name, val);
     }
 
-    fn get_variable(&self, name: &String) -> &PointerValue<'ctx> {
+    fn get_variable(&self, name: &String) -> &Variable<'ctx> {
         self.variables
             .iter()
             .rev()
@@ -158,11 +163,27 @@ impl<'ctx> CodeGenerator<'ctx> {
             .functions
             .get(&function.id)
             .expect(format!("function {} was not declared", function.signature.name).as_str());
-
+        let llvm_params = llvm_function.get_params();
         let entry = self.context.append_basic_block(*llvm_function, "entry");
 
         self.builder.position_at_end(entry);
+        self.push_scope();
+        for (param, value) in function.parameters.iter().zip(llvm_params) {
+            let param_type = self.llvm_type(&param.param_type);
+            let alloca = self
+                .builder
+                .build_alloca(param_type, &param.name)
+                .expect("failed to build func param alloca");
 
+            self.builder
+                .build_store(alloca, value)
+                .expect("failed to build func param store");
+            let variable = Variable {
+                ptr: alloca,
+                ty: param_type,
+            };
+            self.add_variable(param.name.clone(), variable);
+        }
         for statement in &body.statements {
             self.compile_statement(statement)?;
         }
@@ -173,6 +194,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                     .build_return(None)
                     .expect("failed to built void return");
             } else {
+                self.pop_scope();
                 panic!("Missing return statement in non unit type function");
             }
         }
@@ -183,6 +205,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         if !compiled_function.verify(true) {
             return Err(CompilerError::InvalidFunction);
         }
+        self.pop_scope();
         Ok(())
     }
 
@@ -242,7 +265,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.builder
             .build_store(alloca, initialiser)
             .expect("failed to build store");
-        self.add_variable(identifier.clone(), alloca);
+        let variable = Variable {
+            ptr: alloca,
+            ty: llvm_type,
+        };
+        self.add_variable(identifier.clone(), variable);
 
         Ok(())
     }
@@ -259,10 +286,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             ));
         };
 
-        let alloca = self.get_variable(identifier);
+        let alloca = self.get_variable(identifier).ptr;
         let value = self.const_expression(expression);
         self.builder
-            .build_store(*alloca, value)
+            .build_store(alloca, value)
             .expect("failed to build store");
 
         Ok(())
@@ -440,7 +467,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         let ret_val = if let Some(val) = value {
-            Some(self.const_expression(val))
+            Some(self.compile_expression(val)?)
         } else {
             None
         };
@@ -461,19 +488,74 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         match expression {
             Expression::Literal(_) => Ok(self.const_expression(expression)),
-            Expression::Identifier(name) => Ok(self.get_variable(name).as_basic_value_enum()),
+            Expression::Identifier(name) => {
+                let variable = self.get_variable(name);
+                let value = self
+                    .builder
+                    .build_load(variable.ty, variable.ptr, "tmpld")
+                    .expect("failed to build load ident");
+                Ok(value)
+            }
             Expression::BinaryOp {
                 left,
                 operator,
                 right,
-            } => todo!(),
-            Expression::UnaryOp { operator, operand } => todo!(),
+            } => self.compile_binary_op(left, operator, right),
+            Expression::UnaryOp { operator, operand } => self.compile_unary_op(operator, operand),
             Expression::ResolvedFunctionCall {
                 function_id,
                 arguments,
-            } => todo!(),
+            } => self.compile_function_call(function_id, arguments),
             Expression::UnresolvedFunctionCall { .. } => {
                 unreachable!("unresolve function call reached compiler")
+            }
+        }
+    }
+    fn compile_binary_op(
+        &self,
+        left: &Expression,
+        op: &TokenType,
+        right: &Expression,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_unary_op(
+        &self,
+        operator: &TokenType,
+        operand: &Expression,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_function_call(
+        &mut self,
+        function_id: &FunctionId,
+        arguments: &Vec<Expression>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let func = *self
+            .functions
+            .get(function_id)
+            .expect("failed to get function");
+
+        let values: Vec<BasicValueEnum<'ctx>> = arguments
+            .iter()
+            .map(|argument| self.compile_expression(argument))
+            .collect::<Result<_, _>>()?;
+
+        let args: Vec<BasicMetadataValueEnum<'ctx>> = values.into_iter().map(Into::into).collect();
+        let result_name = format!(
+            "call_{}_res",
+            func.get_name().to_str().expect("invalid function name")
+        );
+        let call = self
+            .builder
+            .build_call(func, &args, result_name.as_str())
+            .expect("failed to build function call");
+
+        match call.try_as_basic_value().basic() {
+            Some(result) => Ok(result),
+            None => {
+                println!("call.try_as_basic_value().basic() failed");
+                Err(CompilerError::InvalidFunction)
             }
         }
     }
