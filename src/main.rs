@@ -228,9 +228,17 @@ impl<'ctx> CodeGenerator<'ctx> {
             Statement::While { .. } => self.compile_while(statement, &function)?,
             Statement::For { .. } => self.compile_for(statement, &function)?,
             Statement::Scope { .. } => self.compile_scope(statement)?,
-            Statement::ExpressionStatement { expression } => {
-                self.compile_expression(expression)?;
-            }
+            Statement::ExpressionStatement { expression } => match expression {
+                Expression::ResolvedFunctionCall {
+                    function_id,
+                    arguments,
+                } => {
+                    self.compile_function_call(function_id, arguments)?;
+                }
+                _ => {
+                    self.compile_expression(expression)?;
+                }
+            },
             Statement::Return { .. } => self.compile_return(statement)?,
             Statement::Break => todo!(),    // uhh
             Statement::Continue => todo!(), // uhh
@@ -518,7 +526,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             Expression::ResolvedFunctionCall {
                 function_id,
                 arguments,
-            } => self.compile_function_call(function_id, arguments),
+            } => self
+                .compile_function_call(function_id, arguments)?
+                .ok_or(CompilerError::InvalidFunction),
             Expression::UnresolvedFunctionCall { .. } => {
                 unreachable!("unresolve function call reached compiler")
             }
@@ -563,7 +573,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &mut self,
         function_id: &FunctionId,
         arguments: &Vec<Expression>,
-    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+    ) -> Result<Option<BasicValueEnum<'ctx>>, CompilerError> {
         let func = *self
             .functions
             .get(function_id)
@@ -584,13 +594,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .build_call(func, &args, result_name.as_str())
             .expect("failed to build function call");
 
-        match call.try_as_basic_value().basic() {
-            Some(result) => Ok(result),
-            None => {
-                println!("call.try_as_basic_value().basic() failed");
-                Err(CompilerError::InvalidFunction)
-            }
-        }
+        Ok(call.try_as_basic_value().basic())
     }
 }
 
