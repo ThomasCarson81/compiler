@@ -120,7 +120,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                         self.context.i32_type().const_int(*n as u64, false).into()
                     }
                     syntax::types::Number::U64(n) => {
-                        self.context.i64_type().const_int(*n as u64, false).into()
+                        self.context.i64_type().const_int(*n, false).into()
                     }
                     syntax::types::Number::F32(n) => {
                         self.context.f32_type().const_float(*n as f64).into()
@@ -185,6 +185,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.add_variable(param.name.clone(), variable);
         }
         for statement in &body.statements {
+            if self.current_block_has_terminator() {
+                println!("compiler found code after terminator. ignoring...");
+                break;
+            }
             self.compile_statement(statement)?;
         }
 
@@ -370,6 +374,10 @@ impl<'ctx> CodeGenerator<'ctx> {
         let then_block = self.context.append_basic_block(*function, "then");
         let merge_block = self.context.append_basic_block(*function, "merge");
 
+        self.builder
+            .build_unconditional_branch(check_block)
+            .expect("failed to unconditionally branch to check block");
+
         self.builder.position_at_end(check_block);
 
         self.builder
@@ -377,6 +385,10 @@ impl<'ctx> CodeGenerator<'ctx> {
             .expect("failed to build conditional branch");
         self.builder.position_at_end(then_block);
         for statement in body {
+            if self.current_block_has_terminator() {
+                println!("compiler found code after terminator. ignoring...");
+                break;
+            }
             self.compile_statement(statement)?;
         }
         if !self.current_block_has_terminator() {
@@ -413,6 +425,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         let check_block = self.context.append_basic_block(*function, "check");
         let then_block = self.context.append_basic_block(*function, "then");
         let merge_block = self.context.append_basic_block(*function, "merge");
+
+        self.builder
+            .build_unconditional_branch(check_block)
+            .expect("failed to unconditionally branch to check block");
+
         self.builder.position_at_end(check_block);
         if let Some(cond) = condition {
             let condition_res = self.compile_expression(cond)?;
@@ -426,10 +443,16 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         self.builder.position_at_end(then_block);
         for statement in body {
+            if self.current_block_has_terminator() {
+                println!("compiler found code after terminator. ignoring...");
+                break;
+            }
             self.compile_statement(statement)?;
         }
-        if let Some(inc) = increment {
-            self.compile_statement(inc)?;
+        if !self.current_block_has_terminator() {
+            if let Some(inc) = increment {
+                self.compile_statement(inc)?;
+            }
         }
         if !self.current_block_has_terminator() {
             self.builder
