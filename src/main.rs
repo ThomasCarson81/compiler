@@ -257,7 +257,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         let llvm_type = self.llvm_type(
             &var_type.expect(format!("unknown type of variable {}", identifier).as_str()),
         );
-        let initialiser = self.const_expression(expression);
+        let initialiser = self.compile_expression(expression)?;
         let alloca = self
             .builder
             .build_alloca(llvm_type, identifier)
@@ -287,7 +287,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         let alloca = self.get_variable(identifier).ptr;
-        let value = self.const_expression(expression);
+        let value = self.compile_expression(expression)?;
         self.builder
             .build_store(alloca, value)
             .expect("failed to build store");
@@ -312,7 +312,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             ));
         };
 
-        let condition_value = self.const_expression(condition);
+        let condition_value = self.compile_expression(condition)?;
 
         let then_block = self.context.append_basic_block(*function, "then");
         let else_llvm_block = self.context.append_basic_block(*function, "else");
@@ -364,7 +364,7 @@ impl<'ctx> CodeGenerator<'ctx> {
                 format!("{:?}", statement),
             ));
         };
-        let condition_value = self.const_expression(condition);
+        let condition_value = self.compile_expression(condition)?;
 
         let check_block = self.context.append_basic_block(*function, "check");
         let then_block = self.context.append_basic_block(*function, "then");
@@ -415,12 +415,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         let merge_block = self.context.append_basic_block(*function, "merge");
         self.builder.position_at_end(check_block);
         if let Some(cond) = condition {
+            let condition_res = self.compile_expression(cond)?;
             self.builder
-                .build_conditional_branch(
-                    self.const_expression(cond).into_int_value(),
-                    then_block,
-                    merge_block,
-                )
+                .build_conditional_branch(condition_res.into_int_value(), then_block, merge_block)
                 .expect("failed to build conditional branch in for");
         } else {
             self.builder
@@ -611,7 +608,7 @@ fn main() {
 
     declare_all_functions(&mut code_gen, &program);
 
-    declare_global_variables(&code_gen, &program);
+    declare_global_variables(&mut code_gen, &program);
 
     match compile_all_functions(&mut code_gen, &program) {
         Ok(_) => {}
@@ -640,7 +637,7 @@ fn get_program_from_file(file_path: &str) -> Result<CheckedProgram, CompilerErro
     Ok(program)
 }
 
-fn declare_global_variables(code_gen: &CodeGenerator, program: &CheckedProgram) {
+fn declare_global_variables(code_gen: &mut CodeGenerator, program: &CheckedProgram) {
     for variable in &program.globals {
         match variable {
             Statement::Let {
@@ -656,6 +653,11 @@ fn declare_global_variables(code_gen: &CodeGenerator, program: &CheckedProgram) 
                 let initialiser = code_gen.const_expression(expression);
                 let global_variable = code_gen.module.add_global(llvm_type, None, &identifier);
                 global_variable.set_initializer(&initialiser);
+                let variable = Variable {
+                    ptr: global_variable.as_pointer_value(),
+                    ty: llvm_type,
+                };
+                code_gen.add_variable(identifier.clone(), variable);
             }
             _ => {
                 unreachable!("Global variable is not a let statement");
