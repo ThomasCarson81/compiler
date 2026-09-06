@@ -488,14 +488,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         match expression {
             Expression::Literal(_) => Ok(self.const_expression(expression)),
-            Expression::Identifier(name) => {
-                let variable = self.get_variable(name);
-                let value = self
-                    .builder
-                    .build_load(variable.ty, variable.ptr, "tmpld")
-                    .expect("failed to build load ident");
-                Ok(value)
-            }
+            Expression::Identifier(name) => self.compile_identifier(name),
             Expression::BinaryOp {
                 left,
                 operator,
@@ -511,6 +504,24 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
         }
     }
+
+    fn compile_identifier(&self, name: &String) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let variable = self.get_variable(name);
+        let temp_name = format!(
+            "tmp_{}",
+            variable
+                .ptr
+                .get_name()
+                .to_str()
+                .expect("invalid variable name")
+        );
+        let value = self
+            .builder
+            .build_load(variable.ty, variable.ptr, temp_name.as_str())
+            .expect("failed to build load ident");
+        Ok(value)
+    }
+
     fn compile_binary_op(
         &self,
         left: &Expression,
@@ -519,6 +530,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         todo!()
     }
+
     fn compile_unary_op(
         &self,
         operator: &TokenType,
@@ -526,6 +538,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         todo!()
     }
+
     fn compile_function_call(
         &mut self,
         function_id: &FunctionId,
