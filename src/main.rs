@@ -4,10 +4,10 @@ use inkwell::{
     context::Context,
     module::Module,
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType},
-    values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue},
+    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue},
 };
-use std::collections::HashMap;
 use std::env;
+use std::{collections::HashMap, str};
 use syntax::{
     ast::{Expression, Statement, TokenType},
     functions::{CheckedProgram, Function, FunctionId, FunctionImplementation},
@@ -28,24 +28,32 @@ struct CodeGenerator<'ctx> {
     variables: Vec<HashMap<String, Variable<'ctx>>>,
 
     string_type: StructType<'ctx>,
+    string_concat_fn: FunctionValue<'ctx>,
 }
 impl<'ctx> CodeGenerator<'ctx> {
     fn new(context: &'ctx Context, program_name: &str) -> CodeGenerator<'ctx> {
         let module = context.create_module(program_name);
         let builder = context.create_builder();
+        let string_type = context.struct_type(
+            &[
+                context.ptr_type(AddressSpace::default()).into(),
+                context.i64_type().into(),
+            ],
+            false,
+        );
+        let concat_fn: FunctionValue<'_> = module.add_function(
+            "oxide_builtin_string_concat",
+            string_type.fn_type(&[string_type.into(), string_type.into()], false),
+            None,
+        );
         CodeGenerator {
             context,
             module,
             builder,
             functions: HashMap::new(),
             variables: vec![HashMap::new()],
-            string_type: context.struct_type(
-                &[
-                    context.ptr_type(AddressSpace::default()).into(),
-                    context.i64_type().into(),
-                ],
-                false,
-            ),
+            string_type: string_type,
+            string_concat_fn: concat_fn,
         }
     }
 
@@ -521,8 +529,22 @@ impl<'ctx> CodeGenerator<'ctx> {
                 left,
                 operator,
                 right,
-            } => self.compile_binary_op(left, operator, right),
-            Expression::UnaryOp { operator, operand } => self.compile_unary_op(operator, operand),
+                inferred_type,
+            } => self.compile_binary_op(
+                left,
+                operator,
+                right,
+                &inferred_type.expect("no inferred type in binary op"),
+            ),
+            Expression::UnaryOp {
+                operator,
+                operand,
+                inferred_type,
+            } => self.compile_unary_op(
+                operator,
+                operand,
+                &inferred_type.expect("no inferred type in unary op"),
+            ),
             Expression::ResolvedFunctionCall {
                 function_id,
                 arguments,
@@ -553,10 +575,182 @@ impl<'ctx> CodeGenerator<'ctx> {
     }
 
     fn compile_binary_op(
-        &self,
+        &mut self,
         left: &Expression,
         op: &TokenType,
         right: &Expression,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let left = self.compile_expression(left)?;
+        let right = self.compile_expression(right)?;
+        match op {
+            TokenType::Plus => self.compile_add(left, right, ty),
+            TokenType::Minus => self.compile_sub(left, right, ty),
+            TokenType::Asterisk => self.compile_mul(left, right, ty),
+            TokenType::Slash => self.compile_div(left, right, ty),
+            TokenType::GreaterThan => self.compile_gt(left, right, ty),
+            TokenType::LessThan => self.compile_lt(left, right, ty),
+            TokenType::GreaterThanOrEqualTo => self.compile_gte(left, right, ty),
+            TokenType::LessThanOrEqualTo => self.compile_lte(left, right, ty),
+            TokenType::EqualTo => self.compile_eq(left, right, ty),
+            TokenType::NotEqualTo => self.compile_neq(left, right, ty),
+            TokenType::LogicalAnd => self.compile_and(left, right, ty),
+            TokenType::LogicalOr => self.compile_or(left, right, ty),
+            _ => unreachable!("invalid binary operator during compilation"),
+        }
+    }
+
+    fn compile_add(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        match ty {
+            Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64 => self.compile_int_add(left, right),
+            Type::F32 | Type::F64 => self.compile_float_add(left, right),
+            Type::String => self.compile_string_concat(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
+    }
+
+    fn compile_int_add(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_add(left.into_int_value(), right.into_int_value(), "isum")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int add".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_add(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_add(left.into_float_value(), right.into_float_value(), "fsum")
+            .map_err(|_| CompilerError::ExpressionBuilderError("float add".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_string_concat(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let left = left.into_struct_value();
+        let right = right.into_struct_value();
+        let result = self
+            .builder
+            .build_call(
+                self.string_concat_fn,
+                &[left.into(), right.into()],
+                "strsum",
+            )
+            .expect("failed to build string concat function call");
+        Ok(result
+            .try_as_basic_value()
+            .basic()
+            .expect("no basic value as concat result"))
+    }
+
+    fn compile_sub(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_mul(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_div(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_gt(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_gte(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_lt(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_lte(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_eq(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_neq(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_and(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        todo!()
+    }
+    fn compile_or(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         todo!()
     }
@@ -565,6 +759,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         &self,
         operator: &TokenType,
         operand: &Expression,
+        ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         todo!()
     }
@@ -600,6 +795,7 @@ impl<'ctx> CodeGenerator<'ctx> {
 
 #[derive(Debug)]
 enum CompilerError {
+    ExpressionBuilderError(String),
     WrongStatementType(String, String),
     InvalidFunction,
     CouldNotReadFile(String),
@@ -647,6 +843,9 @@ fn main() {
                 CompilerError::InvalidFunction => println!("Function invalid."),
                 CompilerError::CouldNotReadFile(_) => {
                     unreachable!("unexpected error when compiling all functions");
+                }
+                CompilerError::ExpressionBuilderError(msg) => {
+                    println!("Expression builder error: {}", msg)
                 }
             }
             std::process::exit(1);
