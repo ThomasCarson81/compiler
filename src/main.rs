@@ -716,16 +716,94 @@ impl<'ctx> CodeGenerator<'ctx> {
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64 => self.compile_int_mul(left, right),
+            Type::F32 | Type::F64 => self.compile_float_mul(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_int_mul(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_mul(left.into_int_value(), right.into_int_value(), "iprod")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int mul".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_mul(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_mul(left.into_float_value(), right.into_float_value(), "fprod")
+            .map_err(|_| CompilerError::ExpressionBuilderError("float mul".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_div(
         &self,
         left: BasicValueEnum<'ctx>,
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => self.compile_uint_div(left, right),
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 => self.compile_int_div(left, right),
+            Type::F32 | Type::F64 => self.compile_float_div(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_uint_div(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_unsigned_div(left.into_int_value(), right.into_int_value(), "uquot")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int div".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_int_div(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_signed_div(left.into_int_value(), right.into_int_value(), "iquot")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int div".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_div(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_div(left.into_float_value(), right.into_float_value(), "fquot")
+            .map_err(|_| CompilerError::ExpressionBuilderError("float div".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_gt(
         &self,
         left: BasicValueEnum<'ctx>,
