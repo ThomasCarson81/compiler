@@ -672,8 +672,44 @@ impl<'ctx> CodeGenerator<'ctx> {
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64 => self.compile_int_sub(left, right),
+            Type::F32 | Type::F64 => self.compile_float_sub(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_int_sub(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_sub(left.into_int_value(), right.into_int_value(), "idiff")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int sub".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_sub(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_sub(left.into_float_value(), right.into_float_value(), "fdiff")
+            .map_err(|_| CompilerError::ExpressionBuilderError("float sub".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_mul(
         &self,
         left: BasicValueEnum<'ctx>,
