@@ -1,5 +1,6 @@
 use inkwell::{
     AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel,
+    basic_block::BasicBlock,
     builder::Builder,
     context::Context,
     module::Module,
@@ -20,6 +21,11 @@ struct Variable<'ctx> {
     ty: BasicTypeEnum<'ctx>,
 }
 
+struct LoopContext<'ctx> {
+    break_target: BasicBlock<'ctx>,
+    continue_target: BasicBlock<'ctx>,
+}
+
 struct CodeGenerator<'ctx> {
     context: &'ctx Context,
     module: Module<'ctx>,
@@ -27,6 +33,7 @@ struct CodeGenerator<'ctx> {
 
     functions: HashMap<FunctionId, FunctionValue<'ctx>>,
     variables: Vec<HashMap<String, Variable<'ctx>>>,
+    loop_stack: Vec<LoopContext<'ctx>>,
 
     string_type: StructType<'ctx>,
     string_concat_fn: FunctionValue<'ctx>,
@@ -53,6 +60,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             builder,
             functions: HashMap::new(),
             variables: vec![HashMap::new()],
+            loop_stack: Vec::new(),
             string_type: string_type,
             string_concat_fn: concat_fn,
         }
@@ -249,8 +257,18 @@ impl<'ctx> CodeGenerator<'ctx> {
                 }
             },
             Statement::Return { .. } => self.compile_return(statement)?,
-            Statement::Break => todo!(),    // uhh
-            Statement::Continue => todo!(), // uhh
+            Statement::Break => {
+                let loop_context = self.loop_stack.last_mut().expect("no loop context");
+                self.builder
+                    .build_unconditional_branch(loop_context.break_target)
+                    .expect("failed to build unconditional branch to break target");
+            }
+            Statement::Continue => {
+                let loop_context = self.loop_stack.last_mut().expect("no loop context");
+                self.builder
+                    .build_unconditional_branch(loop_context.continue_target)
+                    .expect("failed to build unconditional branch to continue target");
+            }
             Statement::FunctionDefinition { .. } => {
                 unreachable!("Function definitions should be declared before compilation")
             }
@@ -377,7 +395,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn compile_while(
         &mut self,
         statement: &Statement,
-        function: &FunctionValue,
+        function: &FunctionValue<'ctx>,
     ) -> Result<(), CompilerError> {
         let Statement::While { condition, body } = statement else {
             return Err(CompilerError::WrongStatementType(
@@ -385,17 +403,23 @@ impl<'ctx> CodeGenerator<'ctx> {
                 format!("{:?}", statement),
             ));
         };
-        let condition_value = self.compile_expression(condition)?;
 
         let check_block = self.context.append_basic_block(*function, "check");
         let then_block = self.context.append_basic_block(*function, "then");
         let merge_block = self.context.append_basic_block(*function, "merge");
+
+        self.loop_stack.push(LoopContext {
+            break_target: merge_block,
+            continue_target: check_block,
+        });
 
         self.builder
             .build_unconditional_branch(check_block)
             .expect("failed to unconditionally branch to check block");
 
         self.builder.position_at_end(check_block);
+
+        let condition_value = self.compile_expression(condition)?;
 
         self.builder
             .build_conditional_branch(condition_value.into_int_value(), then_block, merge_block)
@@ -408,6 +432,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             }
             self.compile_statement(statement)?;
         }
+        self.loop_stack.pop();
         if !self.current_block_has_terminator() {
             self.builder
                 .build_unconditional_branch(check_block)
@@ -420,7 +445,7 @@ impl<'ctx> CodeGenerator<'ctx> {
     fn compile_for(
         &mut self,
         statement: &Statement,
-        function: &FunctionValue,
+        function: &FunctionValue<'ctx>,
     ) -> Result<(), CompilerError> {
         let Statement::For {
             initialiser,
@@ -441,7 +466,13 @@ impl<'ctx> CodeGenerator<'ctx> {
 
         let check_block = self.context.append_basic_block(*function, "check");
         let then_block = self.context.append_basic_block(*function, "then");
+        let increment_block = self.context.append_basic_block(*function, "increment");
         let merge_block = self.context.append_basic_block(*function, "merge");
+
+        self.loop_stack.push(LoopContext {
+            break_target: merge_block,
+            continue_target: increment_block,
+        });
 
         self.builder
             .build_unconditional_branch(check_block)
@@ -467,15 +498,25 @@ impl<'ctx> CodeGenerator<'ctx> {
             self.compile_statement(statement)?;
         }
         if !self.current_block_has_terminator() {
-            if let Some(inc) = increment {
-                self.compile_statement(inc)?;
-            }
+            self.builder
+                .build_unconditional_branch(increment_block)
+                .expect("failed to build unconditional branch to increment block.");
         }
+
+        self.builder.position_at_end(increment_block);
+
+        if let Some(inc) = increment {
+            self.compile_statement(inc)?;
+        }
+
         if !self.current_block_has_terminator() {
             self.builder
                 .build_unconditional_branch(check_block)
-                .expect("failed to build unconditional branch to check block in for");
+                .expect("failed to build unconditional branch to check block.");
         }
+
+        self.loop_stack.pop();
+
         self.builder.position_at_end(merge_block);
         Ok(())
     }
@@ -1453,8 +1494,8 @@ enum CompilerError {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        println!("Please provide a file to compile.");
+    if args.len() != 3 {
+        println!("Please provide a file to compile, and the name of the object file to produce.");
         return;
     }
     let program = match get_program_from_file(&args[1]) {
@@ -1507,9 +1548,7 @@ fn main() {
         .get(&program.main_function_id)
         .unwrap();
     generate_main_function(&mut code_gen, &oxide_main);
-    let object_file_name = format!("{}.o", program_name);
-    println!("producing object file: {}", object_file_name);
-    produce_object_file(&code_gen.module, &object_file_name);
+    produce_object_file(&code_gen.module, &args[2]);
 }
 
 fn get_program_from_file(file_path: &str) -> Result<CheckedProgram, CompilerError> {
