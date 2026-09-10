@@ -1070,16 +1070,108 @@ impl<'ctx> CodeGenerator<'ctx> {
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64 => self.compile_int_eq(left, right),
+            Type::F32 | Type::F64 => self.compile_float_eq(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_int_eq(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::EQ,
+                left.into_int_value(),
+                right.into_int_value(),
+                "ieq",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("int eq".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_eq(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_compare(
+                FloatPredicate::OEQ,
+                left.into_float_value(),
+                right.into_float_value(),
+                "feq",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("float eq".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_neq(
         &self,
         left: BasicValueEnum<'ctx>,
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64 => self.compile_int_neq(left, right),
+            Type::F32 | Type::F64 => self.compile_float_neq(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_int_neq(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::NE,
+                left.into_int_value(),
+                right.into_int_value(),
+                "ineq",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("int neq".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_neq(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_compare(
+                FloatPredicate::ONE,
+                left.into_float_value(),
+                right.into_float_value(),
+                "fneq",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("float neq".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_and(
         &self,
         left: BasicValueEnum<'ctx>,
