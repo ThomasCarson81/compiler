@@ -1178,24 +1178,239 @@ impl<'ctx> CodeGenerator<'ctx> {
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        if !matches!(ty, Type::Bool) {
+            unreachable!("invalid type during compilation");
+        }
+
+        let left = left.into_int_value();
+        let right = right.into_int_value();
+        Ok(self
+            .builder
+            .build_and(left, right, "and")
+            .map_err(|_| CompilerError::ExpressionBuilderError("and".into()))?
+            .as_basic_value_enum())
     }
+
     fn compile_or(
         &self,
         left: BasicValueEnum<'ctx>,
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        if !matches!(ty, Type::Bool) {
+            unreachable!("invalid type during compilation");
+        }
+
+        let left = left.into_int_value();
+        let right = right.into_int_value();
+        Ok(self
+            .builder
+            .build_or(left, right, "or")
+            .map_err(|_| CompilerError::ExpressionBuilderError("or".into()))?
+            .as_basic_value_enum())
     }
 
     fn compile_unary_op(
-        &self,
+        &mut self,
         operator: &TokenType,
         operand: &Expression,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match operator {
+            TokenType::Increment => self.compile_inc(operand, ty),
+            TokenType::Decrement => self.compile_dec(operand, ty),
+            TokenType::Minus => {
+                let operand = self.compile_expression(operand)?;
+                self.compile_neg(operand, ty)
+            }
+            TokenType::Not => {
+                let operand = self.compile_expression(operand)?;
+                self.compile_not(operand, ty)
+            }
+            _ => unreachable!("invalid binary operator during compilation"),
+        }
+    }
+
+    fn compile_inc(
+        &mut self,
+        operand: &Expression,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        match ty {
+            Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64 => self.compile_int_inc(operand, ty),
+            Type::F32 | Type::F64 => self.compile_float_inc(operand, ty),
+            _ => unreachable!("invalid type during compilation"),
+        }
+    }
+
+    fn compile_int_inc(
+        &mut self,
+        operand: &Expression,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let Expression::Identifier(ident) = operand else {
+            unreachable!("invalid type during compilation");
+        };
+        let one_int = self.llvm_type(ty).into_int_type().const_int(1, false);
+        let operand_value = self.compile_expression(operand)?;
+        let result = self
+            .builder
+            .build_int_add(operand_value.into_int_value(), one_int, "iinc")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int inc".into()))?
+            .as_basic_value_enum();
+
+        let var_ptr = self.get_variable(ident).ptr;
+        self.builder
+            .build_store(var_ptr, result)
+            .expect("failed to build store");
+        Ok(result)
+    }
+
+    fn compile_float_inc(
+        &mut self,
+        operand: &Expression,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let Expression::Identifier(ident) = operand else {
+            unreachable!("invalid type during compilation");
+        };
+        let one_float = self.llvm_type(ty).into_float_type().const_float(1.0);
+        let operand_value = self.compile_expression(operand)?;
+        let result = self
+            .builder
+            .build_float_add(operand_value.into_float_value(), one_float, "finc")
+            .map_err(|_| CompilerError::ExpressionBuilderError("float inc".into()))?
+            .as_basic_value_enum();
+
+        let var_ptr = self.get_variable(ident).ptr;
+        self.builder
+            .build_store(var_ptr, result)
+            .expect("failed to build store");
+        Ok(result)
+    }
+
+    fn compile_dec(
+        &mut self,
+        operand: &Expression,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        match ty {
+            Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64 => self.compile_int_dec(operand, ty),
+            Type::F32 | Type::F64 => self.compile_float_dec(operand, ty),
+            _ => unreachable!("invalid type during compilation"),
+        }
+    }
+
+    fn compile_int_dec(
+        &mut self,
+        operand: &Expression,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let Expression::Identifier(ident) = operand else {
+            unreachable!("invalid type during compilation");
+        };
+        let one_int = self.llvm_type(ty).into_int_type().const_int(1, false);
+        let operand_value = self.compile_expression(operand)?;
+        let result = self
+            .builder
+            .build_int_sub(operand_value.into_int_value(), one_int, "idec")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int dec".into()))?
+            .as_basic_value_enum();
+
+        let var_ptr = self.get_variable(ident).ptr;
+        self.builder
+            .build_store(var_ptr, result)
+            .expect("failed to build store");
+        Ok(result)
+    }
+
+    fn compile_float_dec(
+        &mut self,
+        operand: &Expression,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let Expression::Identifier(ident) = operand else {
+            unreachable!("invalid type during compilation");
+        };
+        let one_float = self.llvm_type(ty).into_float_type().const_float(1.0);
+        let operand_value = self.compile_expression(operand)?;
+        let result = self
+            .builder
+            .build_float_sub(operand_value.into_float_value(), one_float, "fdec")
+            .map_err(|_| CompilerError::ExpressionBuilderError("float dec".into()))?
+            .as_basic_value_enum();
+
+        let var_ptr = self.get_variable(ident).ptr;
+        self.builder
+            .build_store(var_ptr, result)
+            .expect("failed to build store");
+        Ok(result)
+    }
+
+    fn compile_neg(
+        &self,
+        operand: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        match ty {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => {
+                unreachable!("invalid type during compilation")
+            }
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 => self.compile_int_neg(operand),
+            Type::F32 | Type::F64 => self.compile_float_neg(operand),
+            _ => unreachable!("invalid type during compilation"),
+        }
+    }
+
+    fn compile_int_neg(
+        &self,
+        operand: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_neg(operand.into_int_value(), "ineg")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int neg".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_neg(
+        &self,
+        operand: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_neg(operand.into_float_value(), "fneg")
+            .map_err(|_| CompilerError::ExpressionBuilderError("float neg".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_not(
+        &self,
+        operand: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        if !matches!(ty, Type::Bool) {
+            unreachable!("invalid type during compilation");
+        }
+        Ok(self
+            .builder
+            .build_not(operand.into_int_value(), "not")
+            .map_err(|_| CompilerError::ExpressionBuilderError("not".into()))?
+            .as_basic_value_enum())
     }
 
     fn compile_function_call(
