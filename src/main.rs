@@ -1,13 +1,14 @@
 use inkwell::{
-    AddressSpace, FloatPredicate, IntPredicate,
+    AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel,
     builder::Builder,
     context::Context,
     module::Module,
+    targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
     types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType},
     values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue},
 };
-use std::env;
 use std::{collections::HashMap, str};
+use std::{env, path::Path};
 use syntax::{
     ast::{Expression, Statement, TokenType},
     functions::{CheckedProgram, Function, FunctionId, FunctionImplementation},
@@ -1506,8 +1507,9 @@ fn main() {
         .get(&program.main_function_id)
         .unwrap();
     generate_main_function(&mut code_gen, &oxide_main);
-
-    println!("{}", code_gen.module.print_to_string().to_string());
+    let object_file_name = format!("{}.o", program_name);
+    println!("producing object file: {}", object_file_name);
+    produce_object_file(&code_gen.module, &object_file_name);
 }
 
 fn get_program_from_file(file_path: &str) -> Result<CheckedProgram, CompilerError> {
@@ -1604,4 +1606,29 @@ fn generate_main_function(code_gen: &mut CodeGenerator, oxide_main: &Function) {
         .builder
         .build_return(Some(&int_zero))
         .expect("failed to build return");
+}
+
+#[allow(dead_code)]
+fn print_ir(code_gen: &CodeGenerator) {
+    // for debugging
+    println!("{}", code_gen.module.print_to_string().to_string());
+}
+
+fn produce_object_file(module: &Module, file_path: &str) {
+    Target::initialize_aarch64(&InitializationConfig::default());
+    let triple = TargetMachine::get_default_triple();
+    let target = Target::from_triple(&triple).expect("uhh");
+    let target_machine = target
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            OptimizationLevel::Default,
+            RelocMode::Default,
+            CodeModel::Default,
+        )
+        .expect("uhh");
+    target_machine
+        .write_to_file(&module, FileType::Object, Path::new(file_path))
+        .expect("failed to write to object file");
 }
