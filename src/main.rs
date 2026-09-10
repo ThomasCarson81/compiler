@@ -1,5 +1,5 @@
 use inkwell::{
-    AddressSpace,
+    AddressSpace, FloatPredicate, IntPredicate,
     builder::Builder,
     context::Context,
     module::Module,
@@ -776,7 +776,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(self
             .builder
             .build_int_unsigned_div(left.into_int_value(), right.into_int_value(), "uquot")
-            .map_err(|_| CompilerError::ExpressionBuilderError("int div".into()))?
+            .map_err(|_| CompilerError::ExpressionBuilderError("uint div".into()))?
             .as_basic_value_enum())
     }
 
@@ -810,32 +810,260 @@ impl<'ctx> CodeGenerator<'ctx> {
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => self.compile_uint_gt(left, right),
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 => self.compile_int_gt(left, right),
+            Type::F32 | Type::F64 => self.compile_float_gt(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_uint_gt(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::UGT,
+                left.into_int_value(),
+                right.into_int_value(),
+                "ugt",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("uint gt".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_int_gt(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::SGT,
+                left.into_int_value(),
+                right.into_int_value(),
+                "igt",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("int gt".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_gt(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_compare(
+                FloatPredicate::OGT,
+                left.into_float_value(),
+                right.into_float_value(),
+                "fgt",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("float gt".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_gte(
         &self,
         left: BasicValueEnum<'ctx>,
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => self.compile_uint_gte(left, right),
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 => self.compile_int_gte(left, right),
+            Type::F32 | Type::F64 => self.compile_float_gte(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_uint_gte(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::UGE,
+                left.into_int_value(),
+                right.into_int_value(),
+                "ugte",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("uint gte".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_int_gte(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::SGE,
+                left.into_int_value(),
+                right.into_int_value(),
+                "igte",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("int gte".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_gte(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_compare(
+                FloatPredicate::OGE,
+                left.into_float_value(),
+                right.into_float_value(),
+                "fgte",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("float gte".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_lt(
         &self,
         left: BasicValueEnum<'ctx>,
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => self.compile_uint_lt(left, right),
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 => self.compile_int_lt(left, right),
+            Type::F32 | Type::F64 => self.compile_float_lt(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_uint_lt(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::ULT,
+                left.into_int_value(),
+                right.into_int_value(),
+                "ult",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("uint lt".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_int_lt(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::SLT,
+                left.into_int_value(),
+                right.into_int_value(),
+                "ilt",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("int lt".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_lt(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_compare(
+                FloatPredicate::OLT,
+                left.into_float_value(),
+                right.into_float_value(),
+                "flt",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("float lt".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_lte(
         &self,
         left: BasicValueEnum<'ctx>,
         right: BasicValueEnum<'ctx>,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        todo!()
+        match ty {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => self.compile_uint_lte(left, right),
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 => self.compile_int_lte(left, right),
+            Type::F32 | Type::F64 => self.compile_float_lte(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
     }
+
+    fn compile_uint_lte(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::ULE,
+                left.into_int_value(),
+                right.into_int_value(),
+                "ulte",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("uint lte".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_int_lte(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_compare(
+                IntPredicate::SLE,
+                left.into_int_value(),
+                right.into_int_value(),
+                "ilte",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("int lte".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_lte(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_compare(
+                FloatPredicate::OLE,
+                left.into_float_value(),
+                right.into_float_value(),
+                "flte",
+            )
+            .map_err(|_| CompilerError::ExpressionBuilderError("float lte".into()))?
+            .as_basic_value_enum())
+    }
+
     fn compile_eq(
         &self,
         left: BasicValueEnum<'ctx>,
