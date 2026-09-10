@@ -50,7 +50,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             false,
         );
         let concat_fn: FunctionValue<'_> = module.add_function(
-            "oxide_builtin_string_concat",
+            "oxide_string_concat",
             string_type.fn_type(&[string_type.into(), string_type.into()], false),
             None,
         );
@@ -1604,7 +1604,7 @@ fn declare_all_functions(code_gen: &mut CodeGenerator, program: &CheckedProgram)
         };
         // Create a unique function name by appending the function ID to the original name
         // eg print_1()
-        let function_name = format!("{}_{}", function.signature.name, function.id.0);
+        let function_name = get_function_name(&function);
         let function_value = code_gen
             .module
             .add_function(&function_name, function_type, None);
@@ -1670,4 +1670,23 @@ fn produce_object_file(module: &Module, file_path: &str) {
     target_machine
         .write_to_file(&module, FileType::Object, Path::new(file_path))
         .expect("failed to write to object file");
+}
+
+fn get_function_name(function: &Function) -> String {
+    match &function.implementation {
+        FunctionImplementation::Oxide(_) => {
+            return format!("{}_{}", function.signature.name, function.id.0);
+        }
+        FunctionImplementation::Builtin(_) => {
+            let mut name = String::from("oxide_");
+            name.push_str(&function.signature.name);
+            name.push_str("_");
+            for param in &function.parameters {
+                name.push_str(&param.param_type.to_string());
+                name.push_str("_");
+            }
+            name.push_str(&function.signature.return_type.to_string());
+            name
+        }
+    }
 }
