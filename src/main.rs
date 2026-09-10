@@ -1501,6 +1501,12 @@ fn main() {
         }
     }
 
+    let oxide_main = program
+        .function_table
+        .get(&program.main_function_id)
+        .unwrap();
+    generate_main_function(&mut code_gen, &oxide_main);
+
     println!("{}", code_gen.module.print_to_string().to_string());
 }
 
@@ -1578,4 +1584,24 @@ fn compile_all_functions(
         }
     }
     Ok(())
+}
+
+fn generate_main_function(code_gen: &mut CodeGenerator, oxide_main: &Function) {
+    let oxide_main = code_gen
+        .functions
+        .get(&oxide_main.id)
+        .expect(format!("function {} was not declared", oxide_main.signature.name).as_str());
+    let main_type = code_gen.context.i32_type().fn_type(&[], false);
+    let llvm_main = code_gen.module.add_function("main", main_type, None);
+    let entry = code_gen.context.append_basic_block(llvm_main, "entry");
+    code_gen.builder.position_at_end(entry);
+    code_gen
+        .builder
+        .build_call(*oxide_main, &[], "call_oxide_main")
+        .expect("failed to build call to oxide main");
+    let int_zero = code_gen.context.i32_type().const_zero();
+    code_gen
+        .builder
+        .build_return(Some(&int_zero))
+        .expect("failed to build return");
 }
