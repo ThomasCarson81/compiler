@@ -203,8 +203,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         }
         for statement in &body.statements {
             if self.current_block_has_terminator() {
-                println!("compiler found code after terminator. ignoring...");
-                break;
+                unreachable!("statements found after terminator");
             }
             self.compile_statement(statement)?;
         }
@@ -427,8 +426,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.builder.position_at_end(then_block);
         for statement in body {
             if self.current_block_has_terminator() {
-                println!("compiler found code after terminator. ignoring...");
-                break;
+                unreachable!("statements found after terminator");
             }
             self.compile_statement(statement)?;
         }
@@ -492,8 +490,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         self.builder.position_at_end(then_block);
         for statement in body {
             if self.current_block_has_terminator() {
-                println!("compiler found code after terminator. ignoring...");
-                break;
+                unreachable!("statements found after terminator");
             }
             self.compile_statement(statement)?;
         }
