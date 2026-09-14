@@ -651,6 +651,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             TokenType::Minus => self.compile_sub(left_val, right_val, ty),
             TokenType::Asterisk => self.compile_mul(left_val, right_val, ty),
             TokenType::Slash => self.compile_div(left_val, right_val, ty),
+            TokenType::Modulo => self.compile_mod(left_val, right_val, ty),
             TokenType::GreaterThan => self.compile_gt(left_val, right_val, ty),
             TokenType::LessThan => self.compile_lt(left_val, right_val, ty),
             TokenType::GreaterThanOrEqualTo => self.compile_gte(left_val, right_val, ty),
@@ -865,6 +866,56 @@ impl<'ctx> CodeGenerator<'ctx> {
             .builder
             .build_float_div(left.into_float_value(), right.into_float_value(), "fquot")
             .map_err(|_| CompilerError::ExpressionBuilderError("float div".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_mod(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        match ty {
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 => self.compile_uint_mod(left, right),
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 => self.compile_int_mod(left, right),
+            Type::F32 | Type::F64 => self.compile_float_mod(left, right),
+            _ => unreachable!("invalid type during compilation"),
+        }
+    }
+
+    fn compile_uint_mod(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_unsigned_rem(left.into_int_value(), right.into_int_value(), "umod")
+            .map_err(|_| CompilerError::ExpressionBuilderError("uint mod".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_int_mod(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_int_signed_rem(left.into_int_value(), right.into_int_value(), "imod")
+            .map_err(|_| CompilerError::ExpressionBuilderError("int mod".into()))?
+            .as_basic_value_enum())
+    }
+
+    fn compile_float_mod(
+        &self,
+        left: BasicValueEnum<'ctx>,
+        right: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        Ok(self
+            .builder
+            .build_float_rem(left.into_float_value(), right.into_float_value(), "fmod")
+            .map_err(|_| CompilerError::ExpressionBuilderError("float mod".into()))?
             .as_basic_value_enum())
     }
 
