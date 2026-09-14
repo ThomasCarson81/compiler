@@ -238,7 +238,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             .expect("failed to get parent block");
 
         match statement {
-            Statement::Let { .. } => self.compile_let(statement)?,
+            Statement::Let { .. } => self.compile_let(statement, &function)?,
             Statement::Assignment { .. } => self.compile_assignment(statement)?,
             Statement::If { .. } => self.compile_if(statement, &function)?,
             Statement::While { .. } => self.compile_while(statement, &function)?,
@@ -278,7 +278,11 @@ impl<'ctx> CodeGenerator<'ctx> {
         Ok(())
     }
 
-    fn compile_let(&mut self, statement: &Statement) -> Result<(), CompilerError> {
+    fn compile_let(
+        &mut self,
+        statement: &Statement,
+        function: &FunctionValue<'ctx>,
+    ) -> Result<(), CompilerError> {
         let Statement::Let {
             identifier,
             expression,
@@ -296,10 +300,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             &var_type.expect(format!("unknown type of variable {}", identifier).as_str()),
         );
         let initialiser = self.compile_expression(expression)?;
-        let alloca = self
-            .builder
-            .build_alloca(llvm_type, identifier)
-            .expect("failed to build alloca");
+        let alloca = self.build_entry_alloca(function, llvm_type, identifier);
         self.builder
             .build_store(alloca, initialiser)
             .expect("failed to build store");
@@ -331,6 +332,29 @@ impl<'ctx> CodeGenerator<'ctx> {
             .expect("failed to build store");
 
         Ok(())
+    }
+
+    fn build_entry_alloca(
+        &self,
+        function: &FunctionValue<'ctx>,
+        llvm_type: BasicTypeEnum<'ctx>,
+        name: &str,
+    ) -> PointerValue<'ctx> {
+        let entry = function
+            .get_first_basic_block()
+            .expect("function has no entry block");
+
+        let entry_builder = self.context.create_builder();
+
+        if let Some(first_instruction) = entry.get_first_instruction() {
+            entry_builder.position_before(&first_instruction);
+        } else {
+            entry_builder.position_at_end(entry);
+        }
+
+        entry_builder
+            .build_alloca(llvm_type, name)
+            .expect("failed to build alloca")
     }
 
     fn compile_if(
@@ -1675,7 +1699,7 @@ fn produce_object_file(module: &Module, file_path: &str) {
             &triple,
             "generic",
             "",
-            OptimizationLevel::Default,
+            OptimizationLevel::Aggressive,
             RelocMode::Default,
             CodeModel::Default,
         )
