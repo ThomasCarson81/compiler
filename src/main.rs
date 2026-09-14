@@ -635,7 +635,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             TokenType::NotEqualTo => self.compile_neq(left_val, right_val, ty),
             TokenType::LogicalAnd => self.compile_and(left_val, right_val, ty),
             TokenType::LogicalOr => self.compile_or(left_val, right_val, ty),
-            TokenType::Walrus => self.compile_walrus(left, right_val, ty),
+            TokenType::Walrus => self.compile_walrus(left, right_val),
             _ => unreachable!("invalid binary operator during compilation"),
         }
     }
@@ -1254,7 +1254,6 @@ impl<'ctx> CodeGenerator<'ctx> {
         &self,
         left: &Expression,
         right: BasicValueEnum<'ctx>,
-        ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         let Expression::Identifier(ident) = left else {
             unreachable!("non-ident increment reached compiler");
