@@ -620,21 +620,22 @@ impl<'ctx> CodeGenerator<'ctx> {
         right: &Expression,
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
-        let left = self.compile_expression(left)?;
-        let right = self.compile_expression(right)?;
+        let left_val = self.compile_expression(left)?;
+        let right_val = self.compile_expression(right)?;
         match op {
-            TokenType::Plus => self.compile_add(left, right, ty),
-            TokenType::Minus => self.compile_sub(left, right, ty),
-            TokenType::Asterisk => self.compile_mul(left, right, ty),
-            TokenType::Slash => self.compile_div(left, right, ty),
-            TokenType::GreaterThan => self.compile_gt(left, right, ty),
-            TokenType::LessThan => self.compile_lt(left, right, ty),
-            TokenType::GreaterThanOrEqualTo => self.compile_gte(left, right, ty),
-            TokenType::LessThanOrEqualTo => self.compile_lte(left, right, ty),
-            TokenType::EqualTo => self.compile_eq(left, right, ty),
-            TokenType::NotEqualTo => self.compile_neq(left, right, ty),
-            TokenType::LogicalAnd => self.compile_and(left, right, ty),
-            TokenType::LogicalOr => self.compile_or(left, right, ty),
+            TokenType::Plus => self.compile_add(left_val, right_val, ty),
+            TokenType::Minus => self.compile_sub(left_val, right_val, ty),
+            TokenType::Asterisk => self.compile_mul(left_val, right_val, ty),
+            TokenType::Slash => self.compile_div(left_val, right_val, ty),
+            TokenType::GreaterThan => self.compile_gt(left_val, right_val, ty),
+            TokenType::LessThan => self.compile_lt(left_val, right_val, ty),
+            TokenType::GreaterThanOrEqualTo => self.compile_gte(left_val, right_val, ty),
+            TokenType::LessThanOrEqualTo => self.compile_lte(left_val, right_val, ty),
+            TokenType::EqualTo => self.compile_eq(left_val, right_val, ty),
+            TokenType::NotEqualTo => self.compile_neq(left_val, right_val, ty),
+            TokenType::LogicalAnd => self.compile_and(left_val, right_val, ty),
+            TokenType::LogicalOr => self.compile_or(left_val, right_val, ty),
+            TokenType::Walrus => self.compile_walrus(left, right_val, ty),
             _ => unreachable!("invalid binary operator during compilation"),
         }
     }
@@ -1249,6 +1250,22 @@ impl<'ctx> CodeGenerator<'ctx> {
             .as_basic_value_enum())
     }
 
+    fn compile_walrus(
+        &self,
+        left: &Expression,
+        right: BasicValueEnum<'ctx>,
+        ty: &Type,
+    ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+        let Expression::Identifier(ident) = left else {
+            unreachable!("non-ident increment reached compiler");
+        };
+        let var_ptr = self.get_variable(ident).ptr;
+        self.builder
+            .build_store(var_ptr, right)
+            .expect("failed to build store");
+        Ok(right)
+    }
+
     fn compile_unary_op(
         &mut self,
         operator: &TokenType,
@@ -1295,7 +1312,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         let Expression::Identifier(ident) = operand else {
-            unreachable!("invalid type during compilation");
+            unreachable!("non-ident increment reached compiler");
         };
         let one_int = self.llvm_type(ty).into_int_type().const_int(1, false);
         let operand_value = self.compile_expression(operand)?;
@@ -1318,7 +1335,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         let Expression::Identifier(ident) = operand else {
-            unreachable!("invalid type during compilation");
+            unreachable!("non-ident increment reached compiler");
         };
         let one_float = self.llvm_type(ty).into_float_type().const_float(1.0);
         let operand_value = self.compile_expression(operand)?;
@@ -1360,7 +1377,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         let Expression::Identifier(ident) = operand else {
-            unreachable!("invalid type during compilation");
+            unreachable!("non-ident decrement reached compiler");
         };
         let one_int = self.llvm_type(ty).into_int_type().const_int(1, false);
         let operand_value = self.compile_expression(operand)?;
@@ -1383,7 +1400,7 @@ impl<'ctx> CodeGenerator<'ctx> {
         ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
         let Expression::Identifier(ident) = operand else {
-            unreachable!("invalid type during compilation");
+            unreachable!("non-ident decrement reached compiler");
         };
         let one_float = self.llvm_type(ty).into_float_type().const_float(1.0);
         let operand_value = self.compile_expression(operand)?;
