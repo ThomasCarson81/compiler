@@ -108,6 +108,9 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Bool => self.context.bool_type().into(),
             Type::String => self.string_type.into(),
             Type::Unit => panic!("Unit type should only be used as a return type"),
+            Type::Tuple(items) => todo!(),
+            Type::Named { id, arguments } => todo!(),
+            Type::GenericParameter(_) => todo!(),
         }
     }
 
@@ -297,7 +300,9 @@ impl<'ctx> CodeGenerator<'ctx> {
         };
 
         let llvm_type = self.llvm_type(
-            &var_type.expect(format!("unknown type of variable {}", identifier).as_str()),
+            &var_type
+                .clone()
+                .expect(format!("unknown type of variable {}", identifier).as_str()),
         );
         let initialiser = self.compile_expression(expression)?;
         let alloca = self.build_entry_alloca(function, llvm_type, identifier);
@@ -597,7 +602,9 @@ impl<'ctx> CodeGenerator<'ctx> {
                 left,
                 operator,
                 right,
-                &inferred_type.expect("no inferred type in binary op"),
+                &inferred_type
+                    .clone()
+                    .expect("no inferred type in binary op"),
             ),
             Expression::UnaryOp {
                 operator,
@@ -606,7 +613,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             } => self.compile_unary_op(
                 operator,
                 operand,
-                &inferred_type.expect("no inferred type in unary op"),
+                &inferred_type.clone().expect("no inferred type in unary op"),
             ),
             Expression::ResolvedFunctionCall {
                 function_id,
@@ -1656,8 +1663,8 @@ fn declare_global_variables(code_gen: &mut CodeGenerator, program: &CheckedProgr
                 mutable: _,
                 var_type,
             } => {
-                let llvm_type = code_gen
-                    .llvm_type(&var_type.expect(
+                let llvm_type =
+                    code_gen.llvm_type(&var_type.clone().expect(
                         format!("unknown type of global variable {}", identifier).as_str(),
                     ));
                 let initialiser = code_gen.const_expression(expression);
