@@ -11,8 +11,9 @@ use inkwell::{
 use std::{collections::HashMap, str};
 use std::{env, path::Path};
 use syntax::{
-    ast::{Expression, Statement, TokenType},
+    ast::{Expression, Statement},
     functions::{CheckedProgram, Function, FunctionId, FunctionImplementation},
+    tokens::TokenType,
     types::{Type, Value},
 };
 
