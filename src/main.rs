@@ -109,8 +109,8 @@ impl<'ctx> CodeGenerator<'ctx> {
             Type::Bool => self.context.bool_type().into(),
             Type::String => self.string_type.into(),
             Type::Unit => panic!("Unit type should only be used as a return type"),
-            Type::Tuple(items) => todo!(),
-            Type::Named { name, arguments } => todo!(),
+            Type::Tuple(_) => todo!(),
+            Type::Named { .. } => todo!(),
             Type::GenericParameter(_) => todo!(),
         }
     }
@@ -278,7 +278,7 @@ impl<'ctx> CodeGenerator<'ctx> {
             Statement::Pass => {
                 unreachable!("Pass statements should be not be present in the checked program")
             }
-            Statement::TypeDefinition(type_definition) => todo!(),
+            Statement::TypeDefinition(_) => todo!(),
         }
         Ok(())
     }
